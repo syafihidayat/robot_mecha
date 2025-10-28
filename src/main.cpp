@@ -161,6 +161,11 @@ void setup()
     external_encoder2.ppr_total(1024);
     external_encoder3.ppr_total(1024);
 
+    wheel1.ppr_total(COUNTS_PER_REV1);
+    wheel2.ppr_total(COUNTS_PER_REV2);
+    wheel3.ppr_total(COUNTS_PER_REV3);
+    wheel4.ppr_total(COUNTS_PER_REV4);
+
     attachInterrupt(digitalPinToInterrupt(enca[0]), readEncoder<0>, RISING);
     attachInterrupt(digitalPinToInterrupt(enca[1]), readEncoder<1>, RISING);
     attachInterrupt(digitalPinToInterrupt(enca[2]), readEncoder<2>, RISING);
@@ -197,7 +202,6 @@ void loop()
             RCCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
             publishData();
             moveBase();
-            // diribble_pneumatic();
         }
         break;
     case AGENT_DISCONNECTED:
@@ -214,10 +218,10 @@ void loop()
     }
 }
 
-// float toLinear(float omega)
-// {
-//     return omega * 0.02375;
-// }
+float toLinear(float omega)
+{
+    return omega * 0.02375;
+}
 
 float toLinear(float pos, float PPR)
 {
@@ -242,6 +246,11 @@ float toLinear(float pos, float PPR)
 //     return angular_vel;
 
 // }
+
+float toRad(float deg)
+{
+    return deg * M_PI / 180;
+}
 
 void moveBase()
 {
@@ -298,14 +307,13 @@ void moveBase()
         current_rps1,
         current_rps2,
         current_rps3);
-        
+
     float vel_enc1 = external_encoder1.convert_speed(pos[3], deltaT);
     float vel_enc2 = external_encoder2.convert_speed(pos[4], deltaT);
     float vel_enc3 = external_encoder3.convert_speed(pos[5], deltaT);
 
-        
-    float yawH = 0.5 * ((toLinear(vel_enc2, 1024) + toLinear(vel_enc1, 1024))) + 0.5 * (angVelocityData.gyro.z);
-
+    float yawH = 0.5 * ((toLinear(vel_enc1, 1024) + toLinear(vel_enc2, 1024))) + 0.5 * (angVelocityData.gyro.z);
+    // float yawH = angVelocityData.gyro.z;
 
     unsigned long now = millis();
     float vel_dt = (now - prev_odom_update) / 1000.0;
@@ -314,16 +322,17 @@ void moveBase()
         vel_dt,
         toLinear(vel_enc1, 1024) * -1, // vel.linear_x
         toLinear(vel_enc3, 1024),      // vel.linear_y
-        yawH / 0.046,
-        event.orientation.x // vel.angular_z
+        0.0,
+        event.orientation.x
+        // event.orientation.x // vel.angular_z
     );
 
     prevT = currT;
 
-    checking_input_msg.data.data[0] = event.orientation.x;
-    checking_input_msg.data.data[1] = pos[3];   //odometry.get_x_pos_();
-    checking_input_msg.data.data[2] = pos[4];  //odometry.get_y_pos_();
-    checking_input_msg.data.data[3] = pos[5];  //odometry.get_heading_();
+    checking_input_msg.data.data[0] = current_rps1;
+    checking_input_msg.data.data[1] = current_rps2;
+    checking_input_msg.data.data[2] = current_rps3;
+    checking_input_msg.data.data[3] = odometry.get_heading_();
 
     RCSOFTCHECK(rcl_publish(&checking_input, &checking_input_msg, NULL));
 
@@ -399,7 +408,7 @@ bool createEntities()
         &imu_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-        "imu/data"));
+        "imu_extern/data"));
 
     RCCHECK(rclc_publisher_init_default(
         &odom_publisher,

@@ -35,8 +35,8 @@
 //  #define USE_MPU9250_IMU
 #define USE_BNO055_IMU
 
-#define K_P 90            // 55
-#define K_I 366.101694915 // 0.045454545
+#define K_P 90        //90            // 55
+#define K_I 366.101694915        //366.101694915 // 0.045454545
 #define K_D 0             // 0
 
 #define drib_kp 50 // 1  //0.9 //1.2
