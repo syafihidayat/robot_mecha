@@ -218,39 +218,20 @@ void loop()
     }
 }
 
-float toLinear(float omega)
-{
-    return omega * 0.02375;
-}
+// float toLinear(float omega)
+// {
+//     return omega * 0.02375;
+// }
 
-float toLinear(float pos, float PPR)
+float toLinear(double pos, double PPR)
 {
     return pos * (2 * M_PI * 0.02375);
 }
 
-// float encPrev;
-// float PPR = 1024;
-// float radian = 0;
-// float angular_vel = 0;
-// float total_gear_ratio = 19.2;
-
-// float toAngular(float enc, float deltaT)
+// float toRad(float deg)
 // {
-//     radian =(enc - encPrev) / deltaT;
-
-//     encPrev = enc;
-
-//     angular_vel = radian / ( total_gear_ratio * PPR);
-
-//     // float omega = (radian / PPR) * 2.0 *M_PI;
-//     return angular_vel;
-
+//     return deg * M_PI / 180;
 // }
-
-float toRad(float deg)
-{
-    return deg * M_PI / 180;
-}
 
 void moveBase()
 {
@@ -312,8 +293,11 @@ void moveBase()
     float vel_enc2 = external_encoder2.convert_speed(pos[4], deltaT);
     float vel_enc3 = external_encoder3.convert_speed(pos[5], deltaT);
 
-    float yawH = 0.5 * ((toLinear(vel_enc1, 1024) + toLinear(vel_enc2, 1024))) + 0.5 * (angVelocityData.gyro.z);
+    // float yawH = 0.5 * ((toLinear(vel_enc1, 1024) + toLinear(vel_enc2, 1024))) + 0.5 * (angVelocityData.gyro.z);
+    // float encoder_angular_vel = (toLinear(vel_enc1, 1024) + toLinear(vel_enc2, 1024)) / (2.0 * 0.2426); //wheel base radius
     // float yawH = angVelocityData.gyro.z;
+
+    // float fused_angular_vel = 0.5 * encoder_angular_vel + 0.5 * angVelocityData.gyro.z;
 
     unsigned long now = millis();
     float vel_dt = (now - prev_odom_update) / 1000.0;
@@ -322,7 +306,8 @@ void moveBase()
         vel_dt,
         toLinear(vel_enc1, 1024) * -1, // vel.linear_x
         toLinear(vel_enc3, 1024),      // vel.linear_y
-        0.0,
+        // 0.0,     
+        angVelocityData.gyro.z,
         event.orientation.x
         // event.orientation.x // vel.angular_z
     );
