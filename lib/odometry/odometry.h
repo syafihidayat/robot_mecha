@@ -33,6 +33,7 @@ public:
     void update(float vel_dt, float linear_vel_x, float linear_vel_y, float angular_vel_z)
     {
         float delta_heading = angular_vel_z * vel_dt; // radians
+
         float cos_h = cos(heading_);
         float sin_h = sin(heading_);
         float delta_x = (linear_vel_x * cos_h - linear_vel_y * sin_h) * vel_dt; // m
@@ -79,6 +80,7 @@ public:
     }
     void update(float vel_dt, float linear_vel_x, float linear_vel_y, float angular_vel_z, float orientation_z)
     {
+
         // float delta_heading = angular_vel_z * vel_dt; // radians
         float cos_h = cos(orientation_z);
         float sin_h = sin(orientation_z);

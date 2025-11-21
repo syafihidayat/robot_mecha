@@ -116,7 +116,7 @@ PID wheel2(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 PID wheel3(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 PID wheel4(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 PID external_encoder1(0, 0, 0, 0, 0);
-PID external_encoder2(0, 0, 0, 0, 0);
+// PID external_encoder2(0, 0, 0, 0, 0);
 PID external_encoder3(0, 0, 0, 0, 0);
 
 Kinematic Kinematics(
@@ -158,7 +158,7 @@ void setup()
         analogWrite(ccw[i], 0);
     }
     external_encoder1.ppr_total(1024);
-    external_encoder2.ppr_total(1024);
+    // external_encoder2.ppr_total(1024);
     external_encoder3.ppr_total(1024);
 
     wheel1.ppr_total(COUNTS_PER_REV1);
@@ -223,15 +223,28 @@ void loop()
 //     return omega * 0.02375;
 // }
 
-float toLinear(double pos, double PPR)
+// float toLinear(double pos, double PPR)
+// {
+//     return pos * (2 * M_PI * 0.02375);
+// }
+
+float toLinear(double pos, float radius)
 {
-    return pos * (2 * M_PI * 0.02375);
+    return pos * radius;
 }
+
+// float toLinear(float ticks_per_sec, float PPR, float wheel_radius)
+// {
+//     float rev_per_sec = ticks_per_sec / PPR;
+//     float meters_per_sec = rev_per_sec * (2 * M_PI * wheel_radius);
+//     return meters_per_sec;
+// }
 
 // float toRad(float deg)
 // {
 //     return deg * M_PI / 180;
 // }
+
 
 void moveBase()
 {
@@ -251,6 +264,7 @@ void moveBase()
 
         digitalWrite(LED_PIN, HIGH);
     }
+
 
     Kinematic::rps req_rps;
     req_rps = Kinematics.getRPS(
@@ -290,34 +304,43 @@ void moveBase()
         current_rps3);
 
     float vel_enc1 = external_encoder1.convert_speed(pos[3], deltaT);
-    float vel_enc2 = external_encoder2.convert_speed(pos[4], deltaT);
+    // float vel_enc2 = external_encoder2.convert_speed(pos[4], deltaT);
     float vel_enc3 = external_encoder3.convert_speed(pos[5], deltaT);
 
     // float yawH = 0.5 * ((toLinear(vel_enc1, 1024) + toLinear(vel_enc2, 1024))) + 0.5 * (angVelocityData.gyro.z);
-    // float encoder_angular_vel = (toLinear(vel_enc1, 1024) + toLinear(vel_enc2, 1024)) / (2.0 * 0.2426); //wheel base radius
-    // float yawH = angVelocityData.gyro.z;
 
-    // float fused_angular_vel = 0.5 * encoder_angular_vel + 0.5 * angVelocityData.gyro.z;
+    float vx = toLinear(vel_enc1, 0.02375) * -1;
+    float vy = toLinear(vel_enc3, 0.02375);
+
+    float yaw = event.orientation.z * (M_PI / 180.0);
+
+    if(fabs(angVelocityData.gyro.z) > 0.25)
+    {
+        vx = 0;
+        vy = 0;
+    }
 
     unsigned long now = millis();
     float vel_dt = (now - prev_odom_update) / 1000.0;
     prev_odom_update = now;
     odometry.update(
         vel_dt,
-        toLinear(vel_enc1, 1024) * -1, // vel.linear_x
-        toLinear(vel_enc3, 1024),      // vel.linear_y
-        // 0.0,     
+        vx,
+        vy,
+        // toLinear(vel_enc1, 1024) * -1,
+        // toLinear(vel_enc3, 1024),
         angVelocityData.gyro.z,
-        event.orientation.x
-        // event.orientation.x // vel.angular_z
+        yaw
+        // event.orientation.x        
     );
 
     prevT = currT;
 
     checking_input_msg.data.data[0] = current_rps1;
     checking_input_msg.data.data[1] = current_rps2;
-    checking_input_msg.data.data[2] = current_rps3;
-    checking_input_msg.data.data[3] = odometry.get_heading_();
+    checking_input_msg.data.data[2] = pos[3];
+    checking_input_msg.data.data[3] = pos[5];
+    checking_input_msg.data.data[4] = odometry.get_heading_();
 
     RCSOFTCHECK(rcl_publish(&checking_input, &checking_input_msg, NULL));
 

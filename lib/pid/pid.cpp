@@ -90,13 +90,29 @@ float PID::control_base(float error, float speed, int condition, float deltaT)
     return condition ? uT : u;
 
 }
-float PID::convert_speed(float enc, float deltaT){
 
-    radian = (enc - encPrev) / deltaT;
+
+// float PID::convert_speed(float enc, float deltaT){
+
+//     radian = (enc - encPrev) / deltaT;
+//     encPrev = enc;
+//     angular_vel = radian / PPR; //ppr 1024
+//     return angular_vel;
+// }
+
+float PID::convert_speed(float enc, float deltaT)
+{
+    float delta_ticks = enc - encPrev;
     encPrev = enc;
-    angular_vel = radian / PPR; //ppr 1024
+
+    float ticks_per_sec = delta_ticks / deltaT;
+
+    float angular_vel = (ticks_per_sec / PPR) * (2.0 * M_PI);
+
     return angular_vel;
 }
+
+
 float PID::control_speed(float target, float enc, float deltaT)
 {
     radian = (enc - encPrev) / deltaT;
