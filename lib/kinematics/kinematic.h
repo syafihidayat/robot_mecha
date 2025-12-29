@@ -53,6 +53,7 @@ public:
               float wheel_diameter, float robot_diameter);
 
     velocities getVelocities(float rps1, float rps2, float rps3);
+    // velocities getVelocities(float rps1, float rps2, float rps3, float rps4);
     rps getRPS(float linear_x, float linear_y, float angular_z, float imu_angular_z);
     float getMaxRPS();
     float toRad(float deg);

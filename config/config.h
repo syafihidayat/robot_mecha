@@ -70,7 +70,7 @@ LEFT  = Y
 */
 
 // define your robot' specs here
-#define MOTOR_MAX_RPS 8.4               // motor's max RPM
+#define MOTOR_MAX_RPS 8.4               // motor's max RPS
 #define MAX_RPS_RATIO 1.3               // max RPM allowed for each MAX_RPM_ALLOWED = MOTOR_MAX_RPM * MAX_RPM_RATIO
 #define MOTOR_OPERATING_VOLTAGE 24      // motor's operating voltage (used to calculate max RPM)
 #define MOTOR_POWER_MAX_VOLTAGE 24      // max voltage of the motor's power source (used to calculate max RPM)
@@ -115,15 +115,6 @@ LEFT  = Y
 #define encA_X 39
 #define encB_X 41
 
-// #define MotorDrib_enca 26
-// #define MotorDrib_encb 27
-
-// #define MOTOR2_ENCODER_A 9
-// #define MOTOR2_ENCODER_B 10
-
-
-
-
 // MOTOR PINS
 
 // #define MOTOR1_PWM -1  // DON'T TOUCH THIS! This is just a placeholder
@@ -140,23 +131,11 @@ LEFT  = Y
 
 // #define MOTOR4_PWM -1 // DON'T TOUCH THIS! This is just a placeholder
 
-// #define limitTop 39 // 38
-// #define limitBottom 41
-#define MOTOR_Up 3  //36
-#define MOTOR_Down 4 //37
 
-#define esc_up 25
-#define esc_down 24
+#define srv_lifter_pin 24
+#define srv_gripper_pin 25
 
-#define Laser 40
-
-// #define MOTOR_RELOAD_INA  96//28  //24
-// #define MOTOR_RELOAD_INB  95//29  //25
-
-// #define proxi_Front 34
-// #define proxi_Behind 26
-
-#define solShoot 38
+#define proxy1 33
 
 // IMU 18,19 / SDA0,SCL0
 
