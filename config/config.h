@@ -115,6 +115,15 @@ LEFT  = Y
 #define encA_X 39
 #define encB_X 41
 
+// ======================================================================
+#define TOF_MIN_DIST 30
+#define TOF_MAX_DIST 46.5                      //parameter sensor tof
+#define TOF_JUMP_MAX 100
+// ========================================================================
+
+//========================================================================
+#define proxy_confirmed = false;
+
 // MOTOR PINS
 
 // #define MOTOR1_PWM -1  // DON'T TOUCH THIS! This is just a placeholder
@@ -136,6 +145,7 @@ LEFT  = Y
 #define srv_gripper_pin 25
 
 #define proxy1 33
+#define proxy2 40
 
 // IMU 18,19 / SDA0,SCL0
 

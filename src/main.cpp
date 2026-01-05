@@ -21,31 +21,44 @@
 #include <sensor_msgs/msg/imu.h>
 #include <std_msgs/msg/int8.h>
 #include <std_msgs/msg/bool.h>
+#include <std_msgs/msg/u_int16.h>
+#include <std_msgs/msg/u_int8.h>
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
 
+#include <Adafruit_VL53L0X.h>
+
 rcl_subscription_t twist_subscriber;
 rcl_subscription_t button_sub;
 rcl_subscription_t proxy_data_sub;
+rcl_subscription_t tof_data_sub;
 rcl_subscription_t allbutton;
 
 rcl_publisher_t odom_publisher;
 rcl_publisher_t imu_publisher;
 rcl_publisher_t checking_input;
 rcl_publisher_t proxy1_publisher;
+rcl_publisher_t proxy2_publisher;
+rcl_publisher_t tof_publisher;
+rcl_publisher_t counter_publisher;
 
 std_msgs__msg__Int8 button_msg;
 std_msgs__msg__Int8 allbutton_msg;
 std_msgs__msg__Bool proxy_data_msg;
+std_msgs__msg__UInt16 tof_data_msg;
+std_msgs__msg__UInt16 tof_msg;
+std_msgs__msg__UInt8 counter_msg;
 std_msgs__msg__Float32MultiArray checking_input_msg;
 
 nav_msgs__msg__Odometry odom_msg;
 sensor_msgs__msg__Imu imu_msg;
 geometry_msgs__msg__Twist twist_msg;
 std_msgs__msg__Bool bool_msg;
+std_msgs__msg__UInt16 UInt16_msg;
+std_msgs__msg__UInt8 UInt8_msg;
 // std_msgs__msg__Int8 int_msg; 
 
 rclc_executor_t executor;
@@ -61,9 +74,11 @@ void setMotor(int cwPin, int ccwPin, float pwmVal);
 void moveBase();
 void publishData();
 void proxyPublish();
+// void proxy2Publish();
 void twistCallback(const void *msgin);
 void allbuttonCallback(const void *msgin);
 void proxy_data_callback(const void *msgin);
+void tof_data_callback(const void *msgin);
 // void gripp_servo(bool state);
 void init_servo_position();
 void update_grip_sequence();
@@ -76,6 +91,10 @@ bool destroyEntities();
 void flashLED(int n_times);
 template <int j>
 void readEncoder();
+bool update_tof();
+void publish_tof();
+// void update_proxy();
+// void update_tof_and_grip();
 
 
 #define RCCHECK(fn)                  \
@@ -112,6 +131,7 @@ void readEncoder();
     unsigned long prev_cmd_time = 0;
     unsigned long prev_odom_update = 0;
     unsigned long prevT = 0;
+    uint32_t state_timer = 0;
     
     enum states
     {
@@ -131,10 +151,19 @@ void readEncoder();
 
     GripStep grip_step = GRIP_IDLE;
 
+    volatile bool proxy_detected = true;
+    uint8_t object_counter = 0;
+    const uint8_t MAX_OBJECT = 5;
+
     unsigned long grip_timer = 0;
     bool grip_target = false;
+    bool tof_triggered = false;
+    bool grip_running = false;
+    bool proxy_locked = false;
+    bool grip_finished = false;
     
     Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
+    Adafruit_VL53L0X lox = Adafruit_VL53L0X();
     
     const int enca[6] = {MOTOR1_ENCODER_A, MOTOR3_ENCODER_A, MOTOR4_ENCODER_A, launcher_up_A, launcher_down_A, encA_X};
     const int encb[6] = {MOTOR1_ENCODER_B, MOTOR3_ENCODER_B, MOTOR4_ENCODER_B, launcher_up_B, launcher_down_B, encB_X};
@@ -162,11 +191,14 @@ Kinematic Kinematics(
     Servo srv_lifter;
     Servo srv_gripper;
     IMU imu_sensor;
+
+    bool tof_ok = false;
     
     void setup()
     {
         Serial.begin(115200);
         set_microros_serial_transports(Serial);
+        // Wire
         
     while (!imu_sensor.init())
     {
@@ -190,14 +222,19 @@ Kinematic Kinematics(
         analogWrite(ccw[i], 0);
     }
 
-    // srv_lifter.attach(srv_gripper_pin);
-    // srv_gripper.attach(srv_gripper_pin);
+    Wire1.begin();
+    Wire1.setClock(100000);
 
-    // srv_lifter.write(0);
-    // srv_gripper.write(120);
+    if(!lox.begin(0x29,false, &Wire1)){
+        while(1);
+    }
 
+    lox.configSensor(Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_SPEED);
+
+    tof_ok = true;
 
     pinMode(proxy1, INPUT);
+    pinMode(proxy2, INPUT);
     external_encoder1.ppr_total(1024);
     external_encoder3.ppr_total(1024);
 
@@ -225,8 +262,8 @@ void init_servo_position(){
     srv_lifter.attach(srv_lifter_pin);
     srv_gripper.attach(srv_gripper_pin);
 
-    srv_gripper.write(120);
-    srv_lifter.write(90);
+    srv_gripper.write(155);
+    srv_lifter.write(35);
 
     // delay(200);
 
@@ -260,19 +297,29 @@ void loop()
         if (state == AGENT_CONNECTED)
         {
             RCCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
-            if(proxy_changed)
-            {
-                proxy_changed = false;
+            // if(proxy_changed)
+            // {
+            //     proxy_changed = false;
 
-                if(!proxy_state && servo_initialized)
-                {
-                    start_grip_sequence();
-                }
+            //     if(!proxy_state && servo_initialized)
+            //     {
+            //         start_grip_sequence();
+            //     }
+            // }
+
+            bool tof_trigger = update_tof();
+
+            if(!grip_running && tof_trigger)
+            {
+                start_grip_sequence();
             }
             update_grip_sequence();
+            proxyPublish();
             publishData();
             moveBase();
-            proxyPublish();
+            // proxy2Publish();
+            publish_tof();
+
 
 
         }
@@ -393,16 +440,86 @@ void moveBase()
     bno.getCalibration(&system, &gyro, &accel, &mag);
 }
 
+uint16_t tof_distance = 0;
+bool tof_valid = false;
+
+bool update_tof(){
+
+    static uint32_t last_tof_ms = 0;
+    static uint16_t last_distance = 0;
+    static bool has_last_distance = false;
+
+    if(millis() - last_tof_ms < 100)
+        return false;
+    last_tof_ms = millis();
+
+    if(!tof_ok)
+        return false;;
+
+    VL53L0X_RangingMeasurementData_t measure;
+    lox.rangingTest(&measure, false);
+
+    if(measure.RangeStatus!= 0 )
+    {
+        tof_valid = false;
+        return false;
+    }
+
+    uint16_t d  = measure.RangeMilliMeter;
+
+    if(d < TOF_MIN_DIST || d > TOF_MAX_DIST){
+        tof_valid = false;
+        return false;
+    }
+
+    if(has_last_distance && abs((int)d - (int)last_distance) > TOF_JUMP_MAX)
+    {
+        return false;
+    }
+
+    tof_distance = d;
+    last_distance = d;
+    has_last_distance = true;
+    tof_valid = true;
+
+    return true;
+}
+
+void publish_tof(){
+
+    if(!tof_valid)return;
+
+    tof_msg.data = tof_distance;
+
+    RCSOFTCHECK(rcl_publish(&tof_publisher, &tof_msg, NULL));
+}
+
+
+
+
 void proxyPublish()
 {
 
     int state = digitalRead(proxy1);
+    
 
     bool_msg.data = (state == HIGH);
     
+    
     RCSOFTCHECK(rcl_publish(&proxy1_publisher, &bool_msg, NULL));
 
+    proxy_detected = (state == LOW);
+
 }
+
+// void proxy2Publish()
+// {
+//     int state2 = digitalRead(proxy2);
+
+//     bool_msg.data = (state2 == HIGH);
+
+//     RCSOFTCHECK(rcl_publish(&proxy2_publisher, &bool_msg, NULL));
+// }
 
 void publishData()
 {
@@ -448,8 +565,13 @@ bool createEntities()
         &proxy_data_sub,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-        "/true_sensor"
-    ))
+        "/true_sensor"));
+
+    RCCHECK(rclc_subscription_init_default(
+        &tof_data_sub,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs,msg, UInt16),
+        "/tof_detected"));
 
     RCCHECK(rclc_executor_init(&executor, &support.context, 9, &allocator));
 
@@ -472,6 +594,13 @@ bool createEntities()
         &proxy_data_sub,
         &proxy_data_msg,
         &proxy_data_callback,
+        ON_NEW_DATA));
+
+    RCCHECK(rclc_executor_add_subscription(
+        &executor,
+        &tof_data_sub,
+        &tof_msg,
+        &tof_data_callback,
         ON_NEW_DATA));
 
     RCCHECK(rclc_publisher_init_default(
@@ -500,6 +629,18 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
         "proxydata"));
 
+    RCCHECK(rclc_publisher_init_default(
+        &proxy2_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
+        "proxydata2"));
+
+    RCCHECK(rclc_publisher_init_default(
+        &tof_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs,msg, UInt16),
+        "tof_distance"));
+
     syncTime();
     digitalWrite(LED_PIN, HIGH);
     return true;
@@ -514,6 +655,8 @@ bool destroyEntities()
     RCCHECK(rcl_publisher_fini(&odom_publisher, &node));
     RCCHECK(rcl_publisher_fini(&imu_publisher, &node));
     RCCHECK(rcl_publisher_fini(&proxy1_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&proxy2_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&tof_publisher, &node));
     RCCHECK(rcl_subscription_fini(&twist_subscriber, &node));
     RCCHECK(rcl_node_fini(&node));
     RCCHECK(rcl_timer_fini(&control_timer));
@@ -548,18 +691,20 @@ void twistCallback(const void *msgin)
     prev_cmd_time = millis();
 }
 
+void tof_data_callback(const void *msgin)
+{
+    const std_msgs__msg__UInt16 *msg = (const std_msgs__msg__UInt16 *)msgin;
+    tof_data_msg = *msg;
+    tof_valid = true;
+}
+
+
 void proxy_data_callback(const void *msgin)
 {
     const std_msgs__msg__Bool *msg = (const std_msgs__msg__Bool *) msgin;
 
-    if(msg->data != proxy_state)
-    {
-        proxy_state = msg->data;
-        proxy_changed = true;
-    }
+    proxy_detected = msg->data;
 }
-
-bool grip_running = false;
 
 void start_grip_sequence()
 {
@@ -574,11 +719,10 @@ void start_grip_sequence()
     srv_gripper.attach(srv_gripper_pin);
 
     
-    srv_lifter.write(135);
+    srv_lifter.write(50);
     // srv_gripper.write(120);
 
 }
-
 
 void update_grip_sequence()
 {
@@ -590,7 +734,7 @@ void update_grip_sequence()
     switch(grip_step)
     {
         case LIFTER_DOWN:
-            srv_gripper.write(30);
+            srv_gripper.write(65);
             grip_step = GRIPPER_CLOSE;
             break;
 
@@ -600,14 +744,15 @@ void update_grip_sequence()
             break;
 
         case LIFTER_UP:
-            srv_gripper.write(120);
+            srv_gripper.write(155);
             grip_step = GRIPPER_OPEN;
             break;
 
         case GRIPPER_OPEN:
-            srv_lifter.write(90);
+            srv_lifter.write(50);
             grip_step = GRIP_IDLE;
             grip_running = false;
+            grip_finished = true;
             break;
 
         default:
@@ -617,31 +762,6 @@ void update_grip_sequence()
 
     }
 }
-
-// void gripp_servo(bool state)
-// {
-
-//     srv_lifter.attach(srv_lifter_pin);
-//     srv_gripper.attach(srv_gripper_pin);
-
-//     if(state){
-
-//         srv_lifter.write(180);
-//         srv_gripper.write(35);
-//     }
-    
-//     else
-//     {
-//         srv_lifter.write(0);
-//         srv_gripper.write(120);
-//     }
-
-//     // delay(300);
-
-//     // srv_lifter.detach();
-//     // srv_gripper.detach();
-
-// }
 
 struct timespec getTime()
 {
