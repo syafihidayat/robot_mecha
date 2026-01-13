@@ -41,16 +41,15 @@ rcl_publisher_t odom_publisher;
 rcl_publisher_t imu_publisher;
 rcl_publisher_t checking_input;
 rcl_publisher_t proxy1_publisher;
-rcl_publisher_t proxy2_publisher;
 rcl_publisher_t tof_publisher;
-rcl_publisher_t counter_publisher;
+rcl_publisher_t swing_publisher;
 
 std_msgs__msg__Int8 button_msg;
 std_msgs__msg__Int8 allbutton_msg;
 std_msgs__msg__Bool proxy_data_msg;
 std_msgs__msg__UInt16 tof_data_msg;
 std_msgs__msg__UInt16 tof_msg;
-std_msgs__msg__UInt8 counter_msg;
+std_msgs__msg__UInt8 swing_msg;
 std_msgs__msg__Float32MultiArray checking_input_msg;
 
 nav_msgs__msg__Odometry odom_msg;
@@ -69,17 +68,17 @@ rcl_timer_t control_timer;
 
 volatile bool proxy_state = false;
 volatile bool proxy_changed = false;
+static bool sensor_ready = false;
 
 void setMotor(int cwPin, int ccwPin, float pwmVal);
 void moveBase();
 void publishData();
 void proxyPublish();
-// void proxy2Publish();
 void twistCallback(const void *msgin);
 void allbuttonCallback(const void *msgin);
 void proxy_data_callback(const void *msgin);
 void tof_data_callback(const void *msgin);
-// void gripp_servo(bool state);
+void control_pos(float angle, float pwm);
 void init_servo_position();
 void update_grip_sequence();
 void start_grip_sequence();
@@ -93,9 +92,6 @@ template <int j>
 void readEncoder();
 bool update_tof();
 void publish_tof();
-// void update_proxy();
-// void update_tof_and_grip();
-
 
 #define RCCHECK(fn)                  \
 {                                \
@@ -145,15 +141,18 @@ void publish_tof();
         GRIP_IDLE,
         LIFTER_DOWN,
         GRIPPER_CLOSE,
+        ELBOW_TO_180,
+        HOLD_AT_180,
+        ELBOW_RETURN,
         GRIPPER_OPEN,
-        LIFTER_UP
+        LIFTER_UP,
+        OPEN_GRIP_AT_180,
+        ELBOW_WAIT_RETURN
     };
 
     GripStep grip_step = GRIP_IDLE;
 
     volatile bool proxy_detected = true;
-    uint8_t object_counter = 0;
-    const uint8_t MAX_OBJECT = 5;
 
     unsigned long grip_timer = 0;
     bool grip_target = false;
@@ -165,10 +164,10 @@ void publish_tof();
     Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
     Adafruit_VL53L0X lox = Adafruit_VL53L0X();
     
-    const int enca[6] = {MOTOR1_ENCODER_A, MOTOR3_ENCODER_A, MOTOR4_ENCODER_A, launcher_up_A, launcher_down_A, encA_X};
-    const int encb[6] = {MOTOR1_ENCODER_B, MOTOR3_ENCODER_B, MOTOR4_ENCODER_B, launcher_up_B, launcher_down_B, encB_X};
+    const int enca[7] = {MOTOR1_ENCODER_A, MOTOR3_ENCODER_A, MOTOR4_ENCODER_A, launcher_up_A, launcher_down_A, encA_X, susan_encoderA};
+    const int encb[7] = {MOTOR1_ENCODER_B, MOTOR3_ENCODER_B, MOTOR4_ENCODER_B, launcher_up_B, launcher_down_B, encB_X, susan_encoderB};
     
-    volatile long pos[6];
+    volatile long pos[7];
     
     PID wheel1(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
     PID wheel2(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
@@ -176,7 +175,8 @@ void publish_tof();
     PID wheel4(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
     PID external_encoder1(0, 0, 0, 0, 0);
 // PID external_encoder2(0, 0, 0, 0, 0);
-PID external_encoder3(0, 0, 0, 0, 0);
+    PID external_encoder3(0, 0, 0, 0, 0);
+    PID lazy_susan(PWM_MIN, PWM_MAX, susan_kp, susan_ki, susan_kd);
 
 Kinematic Kinematics(
     Kinematic::LINO_BASE,
@@ -188,7 +188,7 @@ Kinematic Kinematics(
     ROBOT_DIAMETER);
     
     Odometry odometry;
-    Servo srv_lifter;
+    Servo srv_elbow;
     Servo srv_gripper;
     IMU imu_sensor;
 
@@ -198,14 +198,14 @@ Kinematic Kinematics(
     {
         Serial.begin(115200);
         set_microros_serial_transports(Serial);
-        // Wire
+        // digitalWrite(LED_PIN, HIGH);
         
     while (!imu_sensor.init())
     {
         flashLED(3);
     }
 
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 7; i++)
     {
 
         pinMode(cw[i], OUTPUT);
@@ -234,9 +234,10 @@ Kinematic Kinematics(
     tof_ok = true;
 
     pinMode(proxy1, INPUT);
-    pinMode(proxy2, INPUT);
     external_encoder1.ppr_total(1024);
     external_encoder3.ppr_total(1024);
+
+    lazy_susan.ppr_total(1442);
 
     wheel1.ppr_total(COUNTS_PER_REV1);
     wheel2.ppr_total(COUNTS_PER_REV2);
@@ -249,8 +250,11 @@ Kinematic Kinematics(
     attachInterrupt(digitalPinToInterrupt(enca[3]), readEncoder<3>, RISING);
     attachInterrupt(digitalPinToInterrupt(enca[4]), readEncoder<4>, RISING);
     attachInterrupt(digitalPinToInterrupt(enca[5]), readEncoder<5>, RISING);
+    attachInterrupt(digitalPinToInterrupt(enca[6]), readEncoder<6>, RISING);
 
     init_servo_position();
+
+    control_pos(0, 100);
 
     pinMode(LED_PIN, OUTPUT);
 }
@@ -259,16 +263,14 @@ bool servo_initialized = false;
 
 void init_servo_position(){
 
-    srv_lifter.attach(srv_lifter_pin);
+    srv_elbow.attach(srv_elbow_pin);
     srv_gripper.attach(srv_gripper_pin);
 
     srv_gripper.write(155);
-    srv_lifter.write(35);
+    // srv_elbow.write(115);
+    srv_elbow.write(127);
 
     // delay(200);
-
-    // srv_lifter.detach();
-    // srv_gripper.detach();
 
     servo_initialized = true;
 }
@@ -286,7 +288,7 @@ void loop()
         if (state == WAITING_AGENT)
         {
             destroyEntities();
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 7; i++)
             {
                 pos[i] = 0;
             }
@@ -297,27 +299,23 @@ void loop()
         if (state == AGENT_CONNECTED)
         {
             RCCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
-            // if(proxy_changed)
-            // {
-            //     proxy_changed = false;
-
-            //     if(!proxy_state && servo_initialized)
-            //     {
-            //         start_grip_sequence();
-            //     }
-            // }
-
-            bool tof_trigger = update_tof();
-
-            if(!grip_running && tof_trigger)
-            {
-                start_grip_sequence();
-            }
-            update_grip_sequence();
+            
+            // bool tof_trigger = update_tof();
             proxyPublish();
+
+            static bool prev_proxy = false;
+            if(sensor_ready)
+            {
+                if(!grip_running && !prev_proxy && proxy_detected)
+                {
+                    start_grip_sequence();
+                }
+            }
+
+            prev_proxy = proxy_detected;
+            update_grip_sequence();
             publishData();
             moveBase();
-            // proxy2Publish();
             publish_tof();
 
 
@@ -431,8 +429,7 @@ void moveBase()
     checking_input_msg.data.data[1] = current_rps2;
     checking_input_msg.data.data[2] = current_rps3;
     checking_input_msg.data.data[3] = angVelocityData.gyro.z;
-    checking_input_msg.data.data[4] = pos[3];
-    checking_input_msg.data.data[5] = pos[5];
+    checking_input_msg.data.data[4] = pos[6];
 
     RCSOFTCHECK(rcl_publish(&checking_input, &checking_input_msg, NULL));
 
@@ -494,9 +491,6 @@ void publish_tof(){
     RCSOFTCHECK(rcl_publish(&tof_publisher, &tof_msg, NULL));
 }
 
-
-
-
 void proxyPublish()
 {
 
@@ -508,18 +502,9 @@ void proxyPublish()
     
     RCSOFTCHECK(rcl_publish(&proxy1_publisher, &bool_msg, NULL));
 
-    proxy_detected = (state == LOW);
+    // proxy_detected = (state == LOW);
 
 }
-
-// void proxy2Publish()
-// {
-//     int state2 = digitalRead(proxy2);
-
-//     bool_msg.data = (state2 == HIGH);
-
-//     RCSOFTCHECK(rcl_publish(&proxy2_publisher, &bool_msg, NULL));
-// }
 
 void publishData()
 {
@@ -630,16 +615,16 @@ bool createEntities()
         "proxydata"));
 
     RCCHECK(rclc_publisher_init_default(
-        &proxy2_publisher,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-        "proxydata2"));
-
-    RCCHECK(rclc_publisher_init_default(
         &tof_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs,msg, UInt16),
         "tof_distance"));
+
+    RCCHECK(rclc_publisher_init_default(
+        &swing_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs,msg, Bool),
+        "swing"));
 
     syncTime();
     digitalWrite(LED_PIN, HIGH);
@@ -655,8 +640,8 @@ bool destroyEntities()
     RCCHECK(rcl_publisher_fini(&odom_publisher, &node));
     RCCHECK(rcl_publisher_fini(&imu_publisher, &node));
     RCCHECK(rcl_publisher_fini(&proxy1_publisher, &node));
-    RCCHECK(rcl_publisher_fini(&proxy2_publisher, &node));
     RCCHECK(rcl_publisher_fini(&tof_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&swing_publisher, &node));
     RCCHECK(rcl_subscription_fini(&twist_subscriber, &node));
     RCCHECK(rcl_node_fini(&node));
     RCCHECK(rcl_timer_fini(&control_timer));
@@ -698,12 +683,21 @@ void tof_data_callback(const void *msgin)
     tof_valid = true;
 }
 
-
 void proxy_data_callback(const void *msgin)
 {
     const std_msgs__msg__Bool *msg = (const std_msgs__msg__Bool *) msgin;
 
-    proxy_detected = msg->data;
+    proxy_detected = !msg->data;
+    sensor_ready = true;
+}
+
+#define ELBOW_180_TICK 737
+#define ELBOW_0_TICK 0
+#define ELBOW_TOL 5
+
+bool elbowReached(float target, float tolerance = ELBOW_TOL)
+{
+    return labs(pos[6] - target) <= tolerance;
 }
 
 void start_grip_sequence()
@@ -711,49 +705,100 @@ void start_grip_sequence()
     if(grip_step != GRIP_IDLE)return;
 
 
+if (proxy_detected)
+{
+    
     grip_running = true;
+    grip_finished = false;
     grip_step = LIFTER_DOWN;
     grip_timer = millis();
-
-    srv_lifter.attach(srv_lifter_pin);
-    srv_gripper.attach(srv_gripper_pin);
-
     
-    srv_lifter.write(50);
-    // srv_gripper.write(120);
+    srv_elbow.attach(srv_elbow_pin);
+    srv_gripper.attach(srv_gripper_pin);
+    
+    
+    srv_elbow.write(40);
+    srv_gripper.write(155);
+}
 
 }
+
+bool gripper_elbow = false;
+bool susan_swing = false;
+bool tof_locked = false;
 
 void update_grip_sequence()
 {
     if(grip_step == GRIP_IDLE) return;
-    if(millis() - grip_timer < 1000) return;
-
-    grip_timer = millis();
 
     switch(grip_step)
     {
         case LIFTER_DOWN:
-            srv_gripper.write(65);
-            grip_step = GRIPPER_CLOSE;
+
+            if(millis() - grip_timer < 1000)return;
+
+            if(update_tof())
+            {
+
+                tof_locked = true;
+                grip_timer = millis();
+                srv_gripper.write(63);
+                grip_step = GRIPPER_CLOSE;
+
+            }
             break;
 
         case GRIPPER_CLOSE:
-            srv_lifter.write(0);
-            grip_step = LIFTER_UP;
+            if(millis() - grip_timer < 500)return;
+            grip_timer = millis();
+
+
+            srv_elbow.write(127);
+            grip_step = ELBOW_TO_180;
             break;
 
-        case LIFTER_UP:
+        case ELBOW_TO_180:
+            if(millis() - grip_timer < 1000)return;
+            
+            control_pos(ELBOW_180_TICK, 70);
+            if(!elbowReached(ELBOW_180_TICK))return;
+
+            
+            grip_timer = millis();
+            susan_swing = true;
+            grip_step = HOLD_AT_180;
+            break;
+
+        case HOLD_AT_180:
+            
+
+            control_pos(180, 90);
+            if(millis() - grip_timer < 1500)return;
+            // grip_timer = millis();
             srv_gripper.write(155);
-            grip_step = GRIPPER_OPEN;
+            swing_msg.data = true;
+            RCSOFTCHECK(rcl_publish(&swing_publisher, & swing_msg, NULL));
+            
+            susan_swing = false;
+            grip_step = ELBOW_RETURN;
             break;
 
-        case GRIPPER_OPEN:
-            srv_lifter.write(50);
-            grip_step = GRIP_IDLE;
+        case ELBOW_RETURN:
+            if(millis() - grip_timer < 1000)return;
+
+            control_pos(ELBOW_0_TICK, 70);
+            if(!elbowReached(ELBOW_0_TICK))return;
+            // srv_gripper.write(0);
+
+            grip_timer = millis();
+
+            susan_swing = true;
             grip_running = false;
+            tof_locked = false;
             grip_finished = true;
-            break;
+
+            grip_step = GRIP_IDLE;
+
 
         default:
             grip_step = GRIP_IDLE;
@@ -761,6 +806,19 @@ void update_grip_sequence()
             break;
 
     }
+}
+
+
+unsigned long pos_prevT = 0;
+void control_pos(float angle, float pwm)
+{
+    unsigned long pos_currT = micros();
+    float deltaT = ((float)(pos_currT - pos_prevT)) / 1.0e6;
+
+    float motor_controlled = lazy_susan.control_angle(angle, (float)pos[6], pwm, deltaT);
+    setMotor(motor_susan_cw,motor_susan_ccw, motor_controlled);
+
+    pos_prevT = pos_currT;
 }
 
 struct timespec getTime()

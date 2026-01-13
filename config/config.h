@@ -39,17 +39,9 @@
 #define K_I 366.101694915        //366.101694915 // 0.045454545
 #define K_D 0             // 0
 
-#define drib_kp 50 // 1  //0.9 //1.2
-#define drib_ki 0.1  // 0 //0.0001 // 0.00006
-#define drib_kd 0.0 // 0  //0 //0.000015
-
-#define ESC_UP_KP 50 //30 //37 //50//7//5 //35
-#define ESC_UP_KI 3 //1.5  //3  //1 //10 //10  //2
-#define ESC_UP_KD 0
-
-#define ESC_DOWN_KP 50 //30 //37 //50//7 //5 //35
-#define ESC_DOWN_KI 3 //1.5 //3  //1 //10 //10 //2
-#define ESC_DOWN_KD 0
+#define susan_kp 5.0 // 1  //0.9 //1.2
+#define susan_ki 0.0  // 0 //0.0001 // 0.00006
+#define susan_kd 0.0 // 0  //0 //0.000015
 
 /*
 ROBOT ORIENTATION
@@ -115,14 +107,17 @@ LEFT  = Y
 #define encA_X 39
 #define encB_X 41
 
+#define susan_encoderA 40
+#define susan_encoderB 38
+
+
 // ======================================================================
 #define TOF_MIN_DIST 30
-#define TOF_MAX_DIST 46.5                      //parameter sensor tof
+#define TOF_MAX_DIST 46                      //parameter sensor tof
 #define TOF_JUMP_MAX 100
 // ========================================================================
 
 //========================================================================
-#define proxy_confirmed = false;
 
 // MOTOR PINS
 
@@ -141,16 +136,19 @@ LEFT  = Y
 // #define MOTOR4_PWM -1 // DON'T TOUCH THIS! This is just a placeholder
 
 
-#define srv_lifter_pin 24
+#define srv_elbow_pin 24
 #define srv_gripper_pin 25
 
 #define proxy1 33
-#define proxy2 40
+
+
+#define motor_susan_cw 7
+#define motor_susan_ccw 8
 
 // IMU 18,19 / SDA0,SCL0
 
-const int cw[6] = {MOTOR1_IN_A, MOTOR3_IN_A, MOTOR4_IN_A};
-const int ccw[6] = {MOTOR1_IN_B, MOTOR3_IN_B, MOTOR4_IN_B};
+const int cw[7] = {MOTOR1_IN_A, MOTOR3_IN_A, MOTOR4_IN_A, motor_susan_cw};
+const int ccw[7] = {MOTOR1_IN_B, MOTOR3_IN_B, MOTOR4_IN_B, motor_susan_ccw};
 
 // const int pwm[4] ={-1,-1,-1,-1};
 #define PWM_MAX pow(2, PWM_BITS) - 1
